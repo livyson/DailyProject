@@ -255,8 +255,15 @@ public final class GitHubService {
         int status = response.statusCode();
         String body = response.body();
         if (status < 200 || status >= 300) {
+            String hint = "";
+            if (status == 403 && body != null
+                    && body.contains("not permitted to create or approve pull requests")) {
+                hint = "\nDica: em Settings → Actions → General → Workflow permissions, "
+                        + "ative 'Read and write permissions' e "
+                        + "'Allow GitHub Actions to create and approve pull requests'.";
+            }
             throw new IOException("GitHub API " + status + " " + request.method() + " "
-                    + request.uri() + "\n" + body);
+                    + request.uri() + "\n" + body + hint);
         }
         if (body == null || body.isBlank()) {
             return mapper.createObjectNode();
