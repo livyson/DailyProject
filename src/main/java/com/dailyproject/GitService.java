@@ -20,6 +20,9 @@ public final class GitService {
     private final String authorEmail;
     private final String sourceBranch;
     private final String targetBranch;
+    private final String githubToken;
+    private final String githubOwner;
+    private final String githubRepo;
 
     public GitService(Config config) {
         this.repoRoot = config.repoRoot();
@@ -27,17 +30,21 @@ public final class GitService {
         this.authorEmail = config.authorEmail();
         this.sourceBranch = config.sourceBranch();
         this.targetBranch = config.targetBranch();
+        this.githubToken = config.githubToken();
+        this.githubOwner = config.githubOwner();
+        this.githubRepo = config.githubRepo();
     }
 
     public void ensureBranchesReady() throws IOException, InterruptedException {
         run("git", "config", "user.name", authorName);
         run("git", "config", "user.email", authorEmail);
+        // Evita falha interativa no CI ao criar merge commits / divergências
+        run("git", "config", "pull.rebase", "false");
+        configureAuthenticatedRemote();
 
-        String current = quiet("git", "rev-parse", "--abbrev-ref", "HEAD").trim();
         boolean hasCommits = quietExit("git", "rev-parse", "--verify", "HEAD") == 0;
 
         if (!hasCommits) {
-            // Repositório vazio: primeiro commit em main, depois cria develop.
             Path keep = repoRoot.resolve(".gitkeep");
             if (!java.nio.file.Files.exists(keep)) {
                 java.nio.file.Files.writeString(keep, "", StandardCharsets.UTF_8);
@@ -54,13 +61,39 @@ public final class GitService {
         fetch();
 
         if (!branchExistsLocal(sourceBranch) && !branchExistsRemote(sourceBranch)) {
-            checkout(targetBranch);
+            ensureCheckout(targetBranch);
             run("git", "checkout", "-B", sourceBranch);
             push(sourceBranch);
         } else {
             ensureCheckout(sourceBranch);
             tryPull(sourceBranch);
         }
+    }
+
+    /**
+     * Configura origin com HTTPS + token para push/fetch no GitHub Actions (e local com PAT).
+     */
+    private void configureAuthenticatedRemote() throws IOException, InterruptedException {
+        if (githubToken == null || githubToken.isBlank()) {
+            return;
+        }
+        String url = "https://x-access-token:" + githubToken + "@github.com/"
+                + githubOwner + "/" + githubRepo + ".git";
+        int hasOrigin = quietExit("git", "remote", "get-url", "origin");
+        if (hasOrigin == 0) {
+            // Não imprime a URL (contém o token)
+            ProcessResult result = execute(new String[]{"git", "remote", "set-url", "origin", url}, false);
+            if (result.exitCode() != 0) {
+                throw new IOException("Falha ao configurar remote autenticado: " + result.output());
+            }
+        } else {
+            ProcessResult result = execute(new String[]{"git", "remote", "add", "origin", url}, false);
+            if (result.exitCode() != 0) {
+                throw new IOException("Falha ao adicionar remote autenticado: " + result.output());
+            }
+        }
+        System.out.println("[git] remote origin autenticado via HTTPS para "
+                + githubOwner + "/" + githubRepo);
     }
 
     public void commitGeneratedCode(Path relativeOrAbsoluteFile, String message)
@@ -73,7 +106,6 @@ public final class GitService {
         ).toString().replace('\\', '/');
 
         run("git", "add", pathArg);
-        // Garante que há algo a commitar (às vezes pathspec precisa ser pasta)
         run("git", "add", "src/main/java/com/dailyproject/generated/");
         int dirty = quietExit("git", "diff", "--cached", "--quiet");
         if (dirty == 0) {
@@ -88,7 +120,7 @@ public final class GitService {
     }
 
     public void fetch() throws IOException, InterruptedException {
-        run("git", "fetch", "origin");
+        run("git", "fetch", "origin", "--prune");
     }
 
     /**
@@ -96,15 +128,14 @@ public final class GitService {
      */
     public void syncSourceWithTargetAfterMerge() throws IOException, InterruptedException {
         fetch();
-        run("git", "checkout", targetBranch);
-        run("git", "pull", "--ff-only", "origin", targetBranch);
+        run("git", "checkout", "-B", targetBranch, "origin/" + targetBranch);
         run("git", "checkout", "-B", sourceBranch, targetBranch);
         run("git", "push", "--force-with-lease", "origin", sourceBranch);
         System.out.println("[git] " + sourceBranch + " realinhada com " + targetBranch);
     }
 
     private void push(String branch) throws IOException, InterruptedException {
-        run("git", "push", "-u", "origin", branch);
+        run("git", "push", "-u", "origin", "HEAD:" + branch);
     }
 
     private void tryPull(String branch) throws IOException, InterruptedException {
@@ -124,8 +155,13 @@ public final class GitService {
         } else if (branchExistsRemote(branch)) {
             run("git", "checkout", "-B", branch, "origin/" + branch);
         } else {
-            checkout(targetBranch);
-            run("git", "checkout", "-B", branch);
+            // Preferência: partir de origin/main se existir
+            if (branchExistsRemote(targetBranch)) {
+                run("git", "checkout", "-B", branch, "origin/" + targetBranch);
+            } else {
+                checkout(targetBranch);
+                run("git", "checkout", "-B", branch);
+            }
         }
     }
 

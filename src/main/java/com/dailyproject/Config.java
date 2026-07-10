@@ -25,6 +25,7 @@ public final class Config {
     private final String authorName;
     private final String authorEmail;
     private final Path repoRoot;
+    private final boolean githubActions;
 
     private Config(
             String githubToken,
@@ -36,7 +37,8 @@ public final class Config {
             List<LocalTime> scheduleTimes,
             String authorName,
             String authorEmail,
-            Path repoRoot
+            Path repoRoot,
+            boolean githubActions
     ) {
         this.githubToken = githubToken;
         this.githubOwner = githubOwner;
@@ -48,20 +50,32 @@ public final class Config {
         this.authorName = authorName;
         this.authorEmail = authorEmail;
         this.repoRoot = repoRoot;
+        this.githubActions = githubActions;
     }
 
     public static Config load(Path repoRoot) {
         Map<String, String> env = EnvLoader.load(repoRoot.resolve(".env"));
 
-        String token = required(env, "GITHUB_TOKEN");
-        String owner = get(env, "GITHUB_OWNER", "livyson");
-        String repo = get(env, "GITHUB_REPO", "DailyProject");
+        String token = resolveToken(env);
+        String owner = firstNonBlank(
+                System.getenv("GITHUB_OWNER"),
+                System.getenv("GITHUB_REPOSITORY_OWNER"),
+                env.get("GITHUB_OWNER"),
+                "livyson"
+        );
+        String repo = firstNonBlank(
+                System.getenv("GITHUB_REPO"),
+                repositoryNameFromEnv(),
+                env.get("GITHUB_REPO"),
+                "DailyProject"
+        );
         String source = get(env, "GIT_SOURCE_BRANCH", "develop");
         String target = get(env, "GIT_TARGET_BRANCH", "main");
         int minLines = Integer.parseInt(get(env, "MIN_LINES", "100"));
         String times = get(env, "SCHEDULE_TIMES", "09:00,14:00,19:00");
         String authorName = get(env, "AUTHOR_NAME", "Livyson");
         String authorEmail = get(env, "AUTHOR_EMAIL", "livyson@users.noreply.github.com");
+        boolean githubActions = "true".equalsIgnoreCase(System.getenv("GITHUB_ACTIONS"));
 
         List<LocalTime> schedule = Arrays.stream(times.split(","))
                 .map(String::trim)
@@ -74,16 +88,48 @@ public final class Config {
         }
 
         return new Config(token, owner, repo, source, target, minLines, schedule,
-                authorName, authorEmail, repoRoot);
+                authorName, authorEmail, repoRoot, githubActions);
     }
 
-    private static String required(Map<String, String> env, String key) {
-        String value = get(env, key, null);
-        if (value == null || value.isBlank() || value.contains("seu_token_aqui")) {
+    /**
+     * Preferência: PAT dedicado (DAILY_GITHUB_TOKEN / GH_PAT) → GITHUB_TOKEN (Actions ou local).
+     */
+    private static String resolveToken(Map<String, String> env) {
+        String token = firstNonBlank(
+                System.getenv("DAILY_GITHUB_TOKEN"),
+                System.getenv("GH_PAT"),
+                System.getenv("GH_TOKEN"),
+                System.getenv("GITHUB_TOKEN"),
+                env.get("DAILY_GITHUB_TOKEN"),
+                env.get("GH_PAT"),
+                env.get("GITHUB_TOKEN")
+        );
+        if (token == null || token.isBlank() || token.contains("seu_token_aqui")) {
             throw new IllegalStateException(
-                    "Defina " + key + " no ambiente ou no arquivo .env (veja .env.example)");
+                    "Defina GITHUB_TOKEN (ou DAILY_GITHUB_TOKEN) no ambiente/.env. "
+                            + "No GitHub Actions o GITHUB_TOKEN já é injetado automaticamente.");
         }
-        return value;
+        return token;
+    }
+
+    private static String repositoryNameFromEnv() {
+        String full = System.getenv("GITHUB_REPOSITORY");
+        if (full == null || !full.contains("/")) {
+            return null;
+        }
+        return full.substring(full.indexOf('/') + 1);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private static String get(Map<String, String> env, String key, String defaultValue) {
@@ -138,6 +184,10 @@ public final class Config {
         return repoRoot;
     }
 
+    public boolean githubActions() {
+        return githubActions;
+    }
+
     public String fullRepo() {
         return githubOwner + "/" + githubRepo;
     }
@@ -149,6 +199,7 @@ public final class Config {
                 + ", minLines=" + minLines
                 + ", schedule=" + scheduleTimes
                 + ", author=" + authorName
+                + ", actions=" + githubActions
                 + "}";
     }
 
