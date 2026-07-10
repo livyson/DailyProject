@@ -6,12 +6,11 @@ import java.nio.file.Path;
  * Entrypoint do DailyProject.
  *
  * <pre>
- *   mvn -q package
- *   java -jar target/daily-project-1.0.0.jar --once    # uma execução (CI / teste)
- *   java -jar target/daily-project-1.0.0.jar           # agenda local 3x/dia
+ *   java -jar target/daily-project-1.0.0.jar --open    # gera + commit develop + PR + comentário + discussão
+ *   java -jar target/daily-project-1.0.0.jar --merge   # aprova/mergeia PR aberto
+ *   java -jar target/daily-project-1.0.0.jar --once    # ciclo completo (open + merge)
+ *   java -jar target/daily-project-1.0.0.jar           # agenda local (só open; merge via --merge)
  * </pre>
- *
- * No GitHub Actions ({@code GITHUB_ACTIONS=true}) sempre executa uma vez e encerra.
  */
 public final class App {
 
@@ -20,20 +19,43 @@ public final class App {
         Config config = Config.load(repoRoot);
         DailyWorkflow workflow = new DailyWorkflow(config);
 
-        boolean once = config.githubActions()
-                || (args.length > 0 && ("--once".equals(args[0]) || "once".equalsIgnoreCase(args[0])));
-        if (once) {
-            workflow.runOnce();
-            return;
+        String mode = resolveMode(args, config);
+        switch (mode) {
+            case "open" -> workflow.openPullRequestCycle();
+            case "merge" -> workflow.mergeOpenPullRequest();
+            case "once" -> workflow.runOnce();
+            case "schedule" -> {
+                System.out.println("DailyProject em modo agenda local (open nos horários).");
+                System.out.println("Merge: rode com --merge ou use o workflow daily-merge.yml.");
+                DailyScheduler scheduler = new DailyScheduler(config, workflow);
+                scheduler.start();
+                Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
+                Thread.currentThread().join();
+            }
+            default -> throw new IllegalArgumentException("Modo desconhecido: " + mode
+                    + " (use --open, --merge, --once ou sem args para agenda)");
         }
+    }
 
-        System.out.println("DailyProject em modo agenda local. No GitHub use Actions (daily.yml).");
-        System.out.println("Use --once para uma execução imediata.");
-        DailyScheduler scheduler = new DailyScheduler(config, workflow);
-        scheduler.start();
-
-        Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
-        Thread.currentThread().join();
+    private static String resolveMode(String[] args, Config config) {
+        if (args.length > 0) {
+            String a = args[0].trim().toLowerCase();
+            if (a.startsWith("--")) {
+                a = a.substring(2);
+            }
+            return switch (a) {
+                case "open", "pr" -> "open";
+                case "merge", "close" -> "merge";
+                case "once", "full", "all" -> "once";
+                case "schedule", "daemon" -> "schedule";
+                default -> a;
+            };
+        }
+        // No Actions, default é abrir PR (visível). Merge é outro workflow.
+        if (config.githubActions()) {
+            return "open";
+        }
+        return "schedule";
     }
 
     private App() {

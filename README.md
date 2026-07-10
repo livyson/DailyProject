@@ -1,72 +1,36 @@
 # DailyProject
 
-Projeto Java que, **três vezes por dia**, gera pelo menos **100 linhas** de código, commita na branch `develop`, abre um pull request para `main`, comenta (com uma pergunta), abre uma discussão e, por fim, **aprova e mergeia** o PR.
+Projeto Java que, **três vezes por dia**, gera pelo menos **100 linhas** de código, commita na `develop`, **abre um PR** para `main`, comenta (com pergunta), abre uma discussão e, **depois**, mergeia o PR.
 
-A execução no GitHub é feita pelo workflow [`.github/workflows/daily.yml`](.github/workflows/daily.yml) (não basta só ter o código no repositório).
+## Por que o PR “sumia”
 
-## Fluxo de cada execução
+Antes o mesmo job abria e mergeava em ~3 segundos. O PR existia (ex.: [#2](https://github.com/livyson/DailyProject/pull/2), [#4](https://github.com/livyson/DailyProject/pull/4)), mas ia direto para **Merged**. Agora o fluxo é separado:
 
-1. Gera uma classe Java em `src/main/java/com/dailyproject/generated/` (≥ 100 linhas)
-2. Faz checkout de `develop`, commit e push
-3. Abre (ou reutiliza) um PR `develop` → `main`
-4. Publica um comentário no PR em primeira pessoa, sempre com **uma pergunta**
-5. Abre uma **Discussion** no repositório
-6. Tenta aprovar o PR e faz **squash merge** para `main`
-7. Realinha `develop` com `main`
+| Workflow | Horário (BRT) | O que faz |
+|----------|---------------|-----------|
+| `daily.yml` | 09:00, 14:00, 19:00 | gera código → commit `develop` → **abre PR** → comenta → discussão |
+| `daily-merge.yml` | 09:30, 14:30, 19:30 | aprova (se possível) → **merge** → realinha `develop` |
 
-## Como roda no GitHub
+Assim o PR fica ~30 minutos na aba **Open**.
 
-O schedule (UTC → horário de Brasília):
+## Checklist no repositório
 
-| Cron (UTC) | Horário (America/Sao_Paulo) |
-|------------|-----------------------------|
-| `0 12 * * *` | 09:00 |
-| `0 17 * * *` | 14:00 |
-| `0 22 * * *` | 19:00 |
+1. **Actions** habilitadas
+2. *Settings → Actions → General → Workflow permissions*:
+   - **Read and write permissions**
+   - **Allow GitHub Actions to create and approve pull requests**
+3. **Discussions** habilitadas
 
-Também dá para disparar manualmente em **Actions → Daily develop → main → Run workflow**.
+## Disparo manual
 
-### Checklist no repositório
+- **Actions → Daily open PR** → Run workflow (abre e deixa o PR aberto)
+- **Actions → Daily merge open PR** → Run workflow (mergeia o PR aberto)
 
-1. **Actions** habilitadas (*Settings → Actions → General*)
-2. **Obrigatório para criar PRs** — *Settings → Actions → General → Workflow permissions*:
-   - marque **Read and write permissions**
-   - marque **Allow GitHub Actions to create and approve pull requests**
-   - salve
-3. **Discussions** habilitadas (*Settings → General → Features → Discussions*)
-4. (Opcional) Secret `DAILY_GITHUB_TOKEN` com um PAT (`repo` + `discussions`) se quiser bypass do `GITHUB_TOKEN`
-
-Sem o item 2, o job falha com:
-`GitHub Actions is not permitted to create or approve pull requests` (HTTP 403).
-
-## Build e execução local
+## Local
 
 ```bash
-cp .env.example .env
-# cole o GITHUB_TOKEN no .env
-
 mvn -q package
-java -jar target/daily-project-1.0.0.jar --once   # uma execução
-java -jar target/daily-project-1.0.0.jar          # agenda local 3x/dia
+java -jar target/daily-project-1.0.0.jar --open    # só abre PR
+java -jar target/daily-project-1.0.0.jar --merge   # só mergeia
+java -jar target/daily-project-1.0.0.jar --once    # open + merge
 ```
-
-## Estrutura
-
-```
-.github/workflows/daily.yml   # agenda 3x/dia no GitHub
-src/main/java/com/dailyproject/
-  App.java
-  Config.java
-  CodeGenerator.java
-  GitService.java
-  GitHubService.java
-  PersonaComments.java
-  DailyWorkflow.java
-  DailyScheduler.java         # só para modo local contínuo
-  generated/                  # snippets commitados diariamente
-```
-
-## Notas
-
-- O GitHub **não permite** aprovar o próprio PR; o app tenta `APPROVE` e, se a API recusar, segue para o merge.
-- Se `main` tiver branch protection exigindo review de outra pessoa, configure um segundo token/bot ou ajuste a proteção.

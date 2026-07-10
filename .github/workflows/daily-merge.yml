@@ -1,30 +1,25 @@
-name: Daily open PR (develop → main)
+name: Daily merge open PR
 
-# Abre PR 3x/dia e deixa visível. O merge é outro workflow (daily-merge.yml).
-# 09:00 / 14:00 / 19:00 America/Sao_Paulo = 12:00 / 17:00 / 22:00 UTC
+# Mergeia o PR aberto ~30 min depois de cada abertura (09:30 / 14:30 / 19:30 BRT).
+# 12:30 / 17:30 / 22:30 UTC
 on:
   schedule:
-    - cron: "0 12 * * *"
-    - cron: "0 17 * * *"
-    - cron: "0 22 * * *"
+    - cron: "30 12 * * *"
+    - cron: "30 17 * * *"
+    - cron: "30 22 * * *"
   workflow_dispatch:
 
-# Também é obrigatório no repo:
-# Settings → Actions → General → Workflow permissions
-#   ✓ Read and write permissions
-#   ✓ Allow GitHub Actions to create and approve pull requests
 permissions:
   contents: write
   pull-requests: write
-  discussions: write
   issues: write
 
 concurrency:
-  group: daily-project-open
+  group: daily-project-merge
   cancel-in-progress: false
 
 jobs:
-  open-pr:
+  merge-pr:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,14 +38,13 @@ jobs:
       - name: Build
         run: mvn -B -q package -DskipTests
 
-      - name: Open PR cycle
+      - name: Merge open PR
         env:
           GITHUB_TOKEN: ${{ secrets.DAILY_GITHUB_TOKEN || github.token }}
           GITHUB_OWNER: ${{ github.repository_owner }}
           GITHUB_REPO: ${{ github.event.repository.name }}
           GIT_SOURCE_BRANCH: develop
           GIT_TARGET_BRANCH: main
-          MIN_LINES: "100"
           AUTHOR_NAME: Livyson
           AUTHOR_EMAIL: livyson@users.noreply.github.com
-        run: java -jar target/daily-project-1.0.0.jar --open
+        run: java -jar target/daily-project-1.0.0.jar --merge

@@ -2,10 +2,14 @@ package com.dailyproject;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Optional;
 
 /**
- * Orquestra o fluxo completo de uma execução:
- * gerar código → commit develop → PR → comentar → discussão → aprovar → merge.
+ * Orquestra o fluxo diário em duas fases:
+ * <ul>
+ *   <li>{@link #openPullRequestCycle()} — gera código, commit em develop, abre PR, comenta e discute</li>
+ *   <li>{@link #mergeOpenPullRequest()} — aprova (se possível) e mergeia o PR aberto</li>
+ * </ul>
  */
 public final class DailyWorkflow {
 
@@ -23,8 +27,18 @@ public final class DailyWorkflow {
         this.github = new GitHubService(config);
     }
 
+    /** Compat: ciclo completo (abrir + merge). Preferir {@link #openPullRequestCycle()} no CI. */
     public void runOnce() throws Exception {
-        System.out.println("=== DailyProject run @ " + LocalDateTime.now() + " ===");
+        openPullRequestCycle();
+        mergeOpenPullRequest();
+    }
+
+    /**
+     * Gera ≥100 linhas, commit/push em develop, abre PR, comenta e abre discussão.
+     * Não mergeia — o PR permanece aberto.
+     */
+    public void openPullRequestCycle() throws Exception {
+        System.out.println("=== DailyProject OPEN @ " + LocalDateTime.now() + " ===");
         System.out.println(config);
 
         git.ensureBranchesReady();
@@ -49,26 +63,47 @@ public final class DailyWorkflow {
         String comment = PersonaComments.prComment(gen.className(), gen.lineCount());
         github.commentOnPullRequest(pr.number(), comment);
 
-        String discussionUrl;
+        String discussionUrl = null;
         try {
             discussionUrl = github.createDiscussion(
                     PersonaComments.discussionTitle(java.time.LocalDate.now()),
                     PersonaComments.discussionBody(pr.url(), gen.className(), gen.lineCount())
             );
         } catch (Exception e) {
-            System.err.println("[github] Discussão falhou (o PR segue): " + e.getMessage());
-            discussionUrl = null;
+            System.err.println("[github] Discussão falhou (o PR segue aberto): " + e.getMessage());
         }
 
-        github.approveAndMerge(pr.number(), PersonaComments.mergeTitle(gen.className()));
+        System.out.println("[flow] PR aberto #" + pr.number() + " → " + pr.url()
+                + (discussionUrl != null ? " | discussão: " + discussionUrl : ""));
+        System.out.println("[flow] Merge fica para o job/comando --merge (PR permanece visível).");
+    }
+
+    /**
+     * Localiza PR aberto develop→main, tenta aprovar e faz squash merge.
+     */
+    public void mergeOpenPullRequest() throws Exception {
+        System.out.println("=== DailyProject MERGE @ " + LocalDateTime.now() + " ===");
+        System.out.println(config);
+
+        Optional<GitHubService.PullRequest> open = github.findOpenPullRequest();
+        if (open.isEmpty()) {
+            System.out.println("[flow] Nenhum PR aberto de " + config.sourceBranch()
+                    + " → " + config.targetBranch() + ". Nada a mergear.");
+            return;
+        }
+
+        GitHubService.PullRequest pr = open.get();
+        System.out.println("[github] PR aberto encontrado: #" + pr.number() + " " + pr.url());
+
+        github.approveAndMerge(pr.number(), PersonaComments.mergeTitle("PR-" + pr.number()));
 
         try {
+            git.ensureBranchesReady();
             git.syncSourceWithTargetAfterMerge();
         } catch (Exception e) {
             System.err.println("[git] sync pós-merge falhou: " + e.getMessage());
         }
 
-        System.out.println("[flow] ciclo concluído. PR #" + pr.number()
-                + (discussionUrl != null ? " | discussão: " + discussionUrl : ""));
+        System.out.println("[flow] merge concluído. PR #" + pr.number());
     }
 }

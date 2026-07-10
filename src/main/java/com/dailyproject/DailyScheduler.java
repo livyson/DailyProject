@@ -61,7 +61,7 @@ public final class DailyScheduler {
             return;
         }
         try {
-            workflow.runOnce();
+            workflow.openPullRequestCycle();
         } catch (Exception e) {
             System.err.println("[scheduler] falha na execução: " + e.getMessage());
             e.printStackTrace(System.err);
